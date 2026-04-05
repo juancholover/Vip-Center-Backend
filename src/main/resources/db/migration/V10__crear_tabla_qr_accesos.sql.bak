@@ -1,0 +1,19 @@
+-- =====================================================
+-- Migración V10: Creación de tabla qr_accesos
+-- =====================================================
+
+CREATE TABLE qr_accesos (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    codigo VARCHAR(50) NOT NULL UNIQUE COMMENT 'Código único del QR (VIP-CLIENT-{id}-{hash})',
+    cliente_id BIGINT NOT NULL COMMENT 'Cliente propietario del QR',
+    imagen_base64 LONGTEXT NOT NULL COMMENT 'Imagen del QR en Base64',
+    fecha_generacion DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Fecha de creación del QR',
+    activo BOOLEAN NOT NULL DEFAULT TRUE COMMENT 'Indica si el QR está activo',
+    motivo_desactivacion VARCHAR(200) COMMENT 'Razón de desactivación',
+    fecha_desactivacion DATETIME COMMENT 'Fecha de desactivación',
+    
+    FOREIGN KEY (cliente_id) REFERENCES clientes(id),
+    INDEX idx_qr_codigo (codigo),
+    INDEX idx_qr_cliente (cliente_id),
+    INDEX idx_qr_activo (activo)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='QR de acceso único por cliente';
