@@ -28,9 +28,10 @@ public class ClienteResponse {
     private String nombreCompleto;
     private String telefono;
     private String email;
+    private String dni;
     
     // Estado de membresía
-    private String estado; // "activo", "vencido", "sin_membresia", "qr_deshabilitado"
+    private String estado; // "activo", "vencido", "qr_deshabilitado"
     private LocalDate fechaVencimiento;
     private Boolean qrActivo;
     private String qrAcceso; // Solo incluir si tiene QR generado

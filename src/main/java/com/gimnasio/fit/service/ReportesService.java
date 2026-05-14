@@ -1,12 +1,25 @@
 package com.gimnasio.fit.service;
 
 import com.gimnasio.fit.dto.*;
+import com.gimnasio.fit.entity.Cliente;
 import com.gimnasio.fit.repository.*;
+import com.gimnasio.fit.specification.SuscripcionSpecification;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellStyle;
+import org.apache.poi.ss.usermodel.Font;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.time.*;
 import java.time.format.TextStyle;
 import java.time.temporal.ChronoUnit;
@@ -40,12 +53,12 @@ public class ReportesService {
             Instant finInstant = toInstant(fin.atTime(23, 59, 59));
 
             // Consultas a BD
-            Double totalIngresos = pagoRepository.sumMontoByFechaBetween(inicioInstant, finInstant);
+            java.math.BigDecimal bd_totalIngresos = pagoRepository.sumMontoByFechaBetween(inicioInstant, finInstant); Double totalIngresos = bd_totalIngresos != null ? bd_totalIngresos.doubleValue() : 0.0;
             Integer cantidadPagos = pagoRepository.countByFechaRegistroBetween(inicioInstant, finInstant);
             
-            Double ingresosAprobados = pagoRepository.sumMontoByEstadoAndFechaBetween("aprobado", inicioInstant, finInstant);
-            Double ingresosPendientes = pagoRepository.sumMontoByEstadoAndFechaBetween("pendiente", inicioInstant, finInstant);
-            Double ingresosRechazados = pagoRepository.sumMontoByEstadoAndFechaBetween("rechazado", inicioInstant, finInstant);
+            java.math.BigDecimal bd_ingresosAprobados = pagoRepository.sumMontoByEstadoAndFechaBetween("aprobado", inicioInstant, finInstant); Double ingresosAprobados = bd_ingresosAprobados != null ? bd_ingresosAprobados.doubleValue() : 0.0;
+            java.math.BigDecimal bd_ingresosPendientes = pagoRepository.sumMontoByEstadoAndFechaBetween("pendiente", inicioInstant, finInstant); Double ingresosPendientes = bd_ingresosPendientes != null ? bd_ingresosPendientes.doubleValue() : 0.0;
+            java.math.BigDecimal bd_ingresosRechazados = pagoRepository.sumMontoByEstadoAndFechaBetween("rechazado", inicioInstant, finInstant); Double ingresosRechazados = bd_ingresosRechazados != null ? bd_ingresosRechazados.doubleValue() : 0.0;
 
             // Validaciones
             if (totalIngresos == null) totalIngresos = 0.0;
@@ -583,6 +596,148 @@ public class ReportesService {
         }
     }
 
+    /**
+     * 📋 REPORTE DE SUSCRIPCIONES CON FILTROS Y PAGINACION
+     */
+    @Transactional(readOnly = true)
+    public Page<ReporteSuscripcionDTO> obtenerReporteSuscripciones(
+            String estado,
+            LocalDate inicio,
+            LocalDate fin,
+            Integer diasAnticipacion,
+            Pageable pageable
+    ) {
+        try {
+            Page<Cliente> clientes = clienteRepository.findAll(
+                SuscripcionSpecification.conFiltros(estado, inicio, fin, diasAnticipacion),
+                pageable
+            );
+
+            LocalDate hoy = LocalDate.now();
+            int dias = diasAnticipacion != null ? Math.max(diasAnticipacion, 0) : 15;
+
+            return clientes.map(cliente -> mapToReporteSuscripcionDTO(cliente, hoy, dias));
+        } catch (Exception e) {
+            log.error("❌ Error al generar reporte de suscripciones: {}", e.getMessage(), e);
+            return Page.empty(pageable);
+        }
+    }
+
+    /**
+     * 📤 EXPORTAR SUSCRIPCIONES A EXCEL
+     */
+    @Transactional(readOnly = true)
+    public byte[] exportarSuscripcionesExcel(
+            String estado,
+            LocalDate inicio,
+            LocalDate fin,
+            Integer diasAnticipacion
+    ) {
+        try {
+            List<Cliente> clientes = clienteRepository.findAll(
+                SuscripcionSpecification.conFiltros(estado, inicio, fin, diasAnticipacion)
+            );
+
+            LocalDate hoy = LocalDate.now();
+            int dias = diasAnticipacion != null ? Math.max(diasAnticipacion, 0) : 15;
+
+            try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                Sheet sheet = workbook.createSheet("Suscripciones");
+                CellStyle headerStyle = crearHeaderStyle(workbook);
+
+                String[] headers = {
+                    "Cliente ID",
+                    "Nombre",
+                    "Email",
+                    "Telefono",
+                    "Plan",
+                    "Fecha Vencimiento",
+                    "Estado"
+                };
+
+                Row header = sheet.createRow(0);
+                for (int i = 0; i < headers.length; i++) {
+                    Cell cell = header.createCell(i);
+                    cell.setCellValue(headers[i]);
+                    cell.setCellStyle(headerStyle);
+                }
+
+                int rowIdx = 1;
+                for (Cliente cliente : clientes) {
+                    ReporteSuscripcionDTO dto = mapToReporteSuscripcionDTO(cliente, hoy, dias);
+                    Row row = sheet.createRow(rowIdx++);
+                    row.createCell(0).setCellValue(dto.getClienteId() != null ? dto.getClienteId() : 0);
+                    row.createCell(1).setCellValue(valueOrEmpty(dto.getNombreCompleto()));
+                    row.createCell(2).setCellValue(valueOrEmpty(dto.getEmail()));
+                    row.createCell(3).setCellValue(valueOrEmpty(dto.getTelefono()));
+                    row.createCell(4).setCellValue(valueOrEmpty(dto.getPlan()));
+                    row.createCell(5).setCellValue(dto.getFechaVencimiento() != null ? dto.getFechaVencimiento().toString() : "");
+                    row.createCell(6).setCellValue(valueOrEmpty(dto.getEstado()));
+                }
+
+                for (int i = 0; i < headers.length; i++) {
+                    sheet.autoSizeColumn(i);
+                }
+
+                workbook.write(out);
+                return out.toByteArray();
+            }
+        } catch (IOException e) {
+            log.error("❌ Error al exportar suscripciones a Excel: {}", e.getMessage(), e);
+            return new byte[0];
+        } catch (Exception e) {
+            log.error("❌ Error al exportar suscripciones: {}", e.getMessage(), e);
+            return new byte[0];
+        }
+    }
+
+    private ReporteSuscripcionDTO mapToReporteSuscripcionDTO(Cliente cliente, LocalDate hoy, int diasAnticipacion) {
+        String plan = cliente.getMembresiaActual() != null ? cliente.getMembresiaActual().getNombre() : "Sin membresia";
+        String estado = resolverEstadoSuscripcion(cliente, hoy, diasAnticipacion);
+
+        return new ReporteSuscripcionDTO(
+            cliente.getId(),
+            cliente.getNombreCompleto(),
+            cliente.getEmail(),
+            cliente.getTelefono(),
+            plan,
+            cliente.getFechaVencimiento(),
+            estado
+        );
+    }
+
+    private String resolverEstadoSuscripcion(Cliente cliente, LocalDate hoy, int diasAnticipacion) {
+        if (cliente.getFechaVencimiento() == null) {
+            return "SIN_MEMBRESIA";
+        }
+        if (Boolean.FALSE.equals(cliente.getQrActivo())) {
+            return "QR_DESHABILITADO";
+        }
+
+        LocalDate fechaVencimiento = cliente.getFechaVencimiento();
+        LocalDate limite = hoy.plusDays(Math.max(diasAnticipacion, 0));
+
+        if (!fechaVencimiento.isBefore(hoy) && !fechaVencimiento.isAfter(limite)) {
+            return "POR_VENCER";
+        }
+        if (fechaVencimiento.isBefore(hoy)) {
+            return "VENCIDA";
+        }
+        return "ACTIVA";
+    }
+
+    private CellStyle crearHeaderStyle(Workbook workbook) {
+        Font font = workbook.createFont();
+        font.setBold(true);
+        CellStyle style = workbook.createCellStyle();
+        style.setFont(font);
+        return style;
+    }
+
+    private String valueOrEmpty(String value) {
+        return value != null ? value : "";
+    }
+
         /**
      * ⚠️ CLIENTES PRÓXIMOS A VENCER (1-7 DÍAS)
      * Retorna suscripciones (clientes con membresías) que vencerán en los próximos 7 días
@@ -661,7 +816,7 @@ public class ReportesService {
                 Instant inicioDia = toInstant(fecha.atStartOfDay());
                 Instant finDia = toInstant(fecha.atTime(23, 59, 59));
                 
-                Double monto = pagoRepository.sumMontoByEstadoAndFechaBetween("aprobado", inicioDia, finDia);
+                java.math.BigDecimal bd_monto = pagoRepository.sumMontoByEstadoAndFechaBetween("aprobado", inicioDia, finDia); Double monto = bd_monto != null ? bd_monto.doubleValue() : 0.0;
                 if (monto == null) monto = 0.0;
                 
                 String fechaStr = fecha.getDayOfMonth() + " " + 
@@ -829,8 +984,8 @@ public class ReportesService {
             Instant finAnteriorInst = toInstant(finAnterior.atTime(23, 59, 59));
             
             // 1. Ingresos Totales
-            Double ingresosActual = pagoRepository.sumMontoByFechaBetween(inicioActualInst, finActualInst);
-            Double ingresosAnterior = pagoRepository.sumMontoByFechaBetween(inicioAnteriorInst, finAnteriorInst);
+            java.math.BigDecimal bd_ingresosActual = pagoRepository.sumMontoByFechaBetween(inicioActualInst, finActualInst); Double ingresosActual = bd_ingresosActual != null ? bd_ingresosActual.doubleValue() : 0.0;
+            java.math.BigDecimal bd_ingresosAnterior = pagoRepository.sumMontoByFechaBetween(inicioAnteriorInst, finAnteriorInst); Double ingresosAnterior = bd_ingresosAnterior != null ? bd_ingresosAnterior.doubleValue() : 0.0;
             ingresosActual = ingresosActual != null ? ingresosActual : 0.0;
             ingresosAnterior = ingresosAnterior != null ? ingresosAnterior : 0.0;
             
@@ -850,8 +1005,8 @@ public class ReportesService {
                 Instant inicioSemanaAntInst = toInstant(inicioSemanaAnt.atStartOfDay());
                 Instant finSemanaAntInst = toInstant(finAnterior.atTime(23, 59, 59));
                 
-                Double semanaActual = pagoRepository.sumMontoByFechaBetween(inicioSemanaInst, finSemanaInst);
-                Double semanaAnterior = pagoRepository.sumMontoByFechaBetween(inicioSemanaAntInst, finSemanaAntInst);
+                java.math.BigDecimal bd_semanaActual = pagoRepository.sumMontoByFechaBetween(inicioSemanaInst, finSemanaInst); Double semanaActual = bd_semanaActual != null ? bd_semanaActual.doubleValue() : 0.0;
+                java.math.BigDecimal bd_semanaAnterior = pagoRepository.sumMontoByFechaBetween(inicioSemanaAntInst, finSemanaAntInst); Double semanaAnterior = bd_semanaAnterior != null ? bd_semanaAnterior.doubleValue() : 0.0;
                 semanaActual = semanaActual != null ? semanaActual : 0.0;
                 semanaAnterior = semanaAnterior != null ? semanaAnterior : 0.0;
                 
@@ -872,8 +1027,8 @@ public class ReportesService {
                 Instant inicioAyerInst = toInstant(ayer.atStartOfDay());
                 Instant finAyerInst = toInstant(ayer.atTime(23, 59, 59));
                 
-                Double hoyMonto = pagoRepository.sumMontoByFechaBetween(inicioHoyInst, finHoyInst);
-                Double ayerMonto = pagoRepository.sumMontoByFechaBetween(inicioAyerInst, finAyerInst);
+                java.math.BigDecimal bd_hoyMonto = pagoRepository.sumMontoByFechaBetween(inicioHoyInst, finHoyInst); Double hoyMonto = bd_hoyMonto != null ? bd_hoyMonto.doubleValue() : 0.0;
+                java.math.BigDecimal bd_ayerMonto = pagoRepository.sumMontoByFechaBetween(inicioAyerInst, finAyerInst); Double ayerMonto = bd_ayerMonto != null ? bd_ayerMonto.doubleValue() : 0.0;
                 hoyMonto = hoyMonto != null ? hoyMonto : 0.0;
                 ayerMonto = ayerMonto != null ? ayerMonto : 0.0;
                 
@@ -1358,8 +1513,8 @@ public class ReportesService {
         Instant inicioAnterior = toInstant(mesAnterior.atDay(1).atStartOfDay());
         Instant finAnterior = toInstant(mesAnterior.atEndOfMonth().atTime(23, 59, 59));
         
-        Double actual = pagoRepository.sumMontoByFechaBetween(inicioActual, finActual);
-        Double anterior = pagoRepository.sumMontoByFechaBetween(inicioAnterior, finAnterior);
+        java.math.BigDecimal bd_actual = pagoRepository.sumMontoByFechaBetween(inicioActual, finActual); Double actual = bd_actual != null ? bd_actual.doubleValue() : 0.0;
+        java.math.BigDecimal bd_anterior = pagoRepository.sumMontoByFechaBetween(inicioAnterior, finAnterior); Double anterior = bd_anterior != null ? bd_anterior.doubleValue() : 0.0;
         
         actual = actual != null ? actual : 0.0;
         anterior = anterior != null ? anterior : 0.0;
@@ -1380,8 +1535,8 @@ public class ReportesService {
         Instant inicioAnterior = toInstant(inicioSemanaAnterior.atStartOfDay());
         Instant finAnterior = toInstant(finSemanaAnterior.atTime(23, 59, 59));
         
-        Double actual = pagoRepository.sumMontoByFechaBetween(inicioActual, finActual);
-        Double anterior = pagoRepository.sumMontoByFechaBetween(inicioAnterior, finAnterior);
+        java.math.BigDecimal bd_actual = pagoRepository.sumMontoByFechaBetween(inicioActual, finActual); Double actual = bd_actual != null ? bd_actual.doubleValue() : 0.0;
+        java.math.BigDecimal bd_anterior = pagoRepository.sumMontoByFechaBetween(inicioAnterior, finAnterior); Double anterior = bd_anterior != null ? bd_anterior.doubleValue() : 0.0;
         
         actual = actual != null ? actual : 0.0;
         anterior = anterior != null ? anterior : 0.0;
@@ -1400,8 +1555,8 @@ public class ReportesService {
         Instant inicioAyer = toInstant(ayer.atStartOfDay());
         Instant finAyer = toInstant(ayer.atTime(23, 59, 59));
         
-        Double actual = pagoRepository.sumMontoByFechaBetween(inicioHoy, finHoy);
-        Double anterior = pagoRepository.sumMontoByFechaBetween(inicioAyer, finAyer);
+        java.math.BigDecimal bd_actual = pagoRepository.sumMontoByFechaBetween(inicioHoy, finHoy); Double actual = bd_actual != null ? bd_actual.doubleValue() : 0.0;
+        java.math.BigDecimal bd_anterior = pagoRepository.sumMontoByFechaBetween(inicioAyer, finAyer); Double anterior = bd_anterior != null ? bd_anterior.doubleValue() : 0.0;
         
         actual = actual != null ? actual : 0.0;
         anterior = anterior != null ? anterior : 0.0;
@@ -1498,10 +1653,12 @@ public class ReportesService {
         Instant inicioAnteriorInstant = toInstant(inicioAnterior.atStartOfDay());
         Instant finAnteriorInstant = toInstant(finAnterior.atTime(23, 59, 59));
         
-        Double actual = pagoRepository.sumMontoByEstadoAndFechaBetween(
+        java.math.BigDecimal bd_actual = pagoRepository.sumMontoByEstadoAndFechaBetween(
             "aprobado", inicioInstant, finInstant);
-        Double anterior = pagoRepository.sumMontoByEstadoAndFechaBetween(
+        Double actual = bd_actual != null ? bd_actual.doubleValue() : 0.0;
+        java.math.BigDecimal bd_anterior = pagoRepository.sumMontoByEstadoAndFechaBetween(
             "aprobado", inicioAnteriorInstant, finAnteriorInstant);
+        Double anterior = bd_anterior != null ? bd_anterior.doubleValue() : 0.0;
         
         actual = actual != null ? actual : 0.0;
         anterior = anterior != null ? anterior : 0.0;
@@ -1528,4 +1685,264 @@ public class ReportesService {
         return crearMetrica("Pagos Realizados", actual.toString(), anterior.toString(), 
                            "credit-card", "ingreso");
     }
+
+    // ========================================================================
+    // HU-29: INGRESOS POR MÉTODO DE PAGO Y POR PLAN (formato frontend)
+    // ========================================================================
+
+    /**
+     * 💳 INGRESOS POR MÉTODO DE PAGO (HU-29)
+     * Devuelve ingresos agrupados por método de pago con formato exacto del frontend.
+     */
+    @Transactional(readOnly = true)
+    public List<IngresosPorMetodoDTO> obtenerIngresosPorMetodo(LocalDate inicio, LocalDate fin) {
+        try {
+            log.info("💳 Generando ingresos por método de pago desde {} hasta {}", inicio, fin);
+
+            Instant inicioInstant = toInstant(inicio.atStartOfDay());
+            Instant finInstant = toInstant(fin.atTime(23, 59, 59));
+
+            List<Object[]> resultados = pagoRepository.sumMontoByMetodoPagoAndFechaBetween(inicioInstant, finInstant);
+            List<IngresosPorMetodoDTO> distribucion = new ArrayList<>();
+
+            // Primera pasada: calcular total general
+            double totalGeneral = 0.0;
+            for (Object[] fila : resultados) {
+                Double total = ((Number) fila[1]).doubleValue();
+                totalGeneral += total;
+            }
+
+            // Segunda pasada: armar DTOs con porcentajes
+            for (Object[] fila : resultados) {
+                String metodo = (String) fila[0];
+                Double total = ((Number) fila[1]).doubleValue();
+                Integer cantidad = ((Number) fila[2]).intValue();
+                Double porcentaje = totalGeneral > 0 ? Math.round((total / totalGeneral) * 10000.0) / 100.0 : 0.0;
+
+                distribucion.add(new IngresosPorMetodoDTO(
+                    metodo != null ? metodo : "Sin especificar",
+                    Math.round(total * 100.0) / 100.0,
+                    cantidad,
+                    porcentaje
+                ));
+            }
+
+            return distribucion;
+        } catch (Exception e) {
+            log.error("❌ Error al generar ingresos por método: {}", e.getMessage(), e);
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * 📊 INGRESOS POR PLAN DE MEMBRESÍA (HU-29)
+     * Devuelve ingresos agrupados por plan con formato exacto del frontend.
+     */
+    @Transactional(readOnly = true)
+    public List<IngresosPorPlanDTO> obtenerIngresosPorPlan(LocalDate inicio, LocalDate fin) {
+        try {
+            log.info("📊 Generando ingresos por plan desde {} hasta {}", inicio, fin);
+
+            Instant inicioInstant = toInstant(inicio.atStartOfDay());
+            Instant finInstant = toInstant(fin.atTime(23, 59, 59));
+
+            List<Object[]> resultados = pagoRepository.sumMontoByPlanAndFechaBetween(inicioInstant, finInstant);
+            List<IngresosPorPlanDTO> distribucion = new ArrayList<>();
+
+            // Primera pasada: calcular total general
+            double totalGeneral = 0.0;
+            for (Object[] fila : resultados) {
+                Double total = ((Number) fila[1]).doubleValue();
+                totalGeneral += total;
+            }
+
+            // Segunda pasada: armar DTOs con porcentajes
+            for (Object[] fila : resultados) {
+                String plan = (String) fila[0];
+                Double total = ((Number) fila[1]).doubleValue();
+                Integer cantidad = ((Number) fila[2]).intValue();
+                Double porcentaje = totalGeneral > 0 ? Math.round((total / totalGeneral) * 10000.0) / 100.0 : 0.0;
+
+                distribucion.add(new IngresosPorPlanDTO(
+                    plan != null ? plan : "Sin plan",
+                    Math.round(total * 100.0) / 100.0,
+                    cantidad,
+                    porcentaje
+                ));
+            }
+
+            return distribucion;
+        } catch (Exception e) {
+            log.error("❌ Error al generar ingresos por plan: {}", e.getMessage(), e);
+            return new ArrayList<>();
+        }
+    }
+
+    // ========================================================================
+    // HU-30: HISTORIAL DE PAGOS DETALLADO Y RETENCIÓN
+    // ========================================================================
+
+    /**
+     * 💳 HISTORIAL DE PAGOS DETALLADO (HU-30)
+     * Devuelve historial con buscador por nombre/teléfono de cliente.
+     */
+    @Transactional(readOnly = true)
+    public List<ReportePagoHistorialDTO> obtenerHistorialPagosDetallado(String busqueda) {
+        try {
+            log.info("💳 Generando historial de pagos detallado (búsqueda: {})", busqueda);
+
+            List<Object[]> resultados = pagoRepository.obtenerHistorialPagosFiltrado(busqueda);
+            List<ReportePagoHistorialDTO> historial = new ArrayList<>();
+
+            for (Object[] fila : resultados) {
+                Long pagoId = (Long) fila[0];
+                Instant fechaRegistro = (Instant) fila[1];
+                String nombreCliente = (String) fila[2] + " " + (String) fila[3];
+                String nombreMembresia = (String) fila[4];
+                String metodoPago = (String) fila[5];
+                Double monto = ((Number) fila[6]).doubleValue();
+                String estado = (String) fila[7];
+
+                LocalDateTime fechaHora = toLocalDateTime(fechaRegistro);
+                String fecha = fechaHora.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+                String hora = fechaHora.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"));
+
+                // Traducir estado
+                String estadoTraducido;
+                if (estado == null) {
+                    estadoTraducido = "Desconocido";
+                } else {
+                    switch (estado.toLowerCase()) {
+                        case "aprobado": case "approved": case "completado": case "completed":
+                            estadoTraducido = "Aprobado";
+                            break;
+                        case "pendiente":
+                            estadoTraducido = "Pendiente";
+                            break;
+                        case "rechazado": case "rejected":
+                            estadoTraducido = "Rechazado";
+                            break;
+                        default:
+                            estadoTraducido = estado;
+                    }
+                }
+
+                historial.add(new ReportePagoHistorialDTO(
+                    pagoId,
+                    fecha,
+                    hora,
+                    nombreCliente,
+                    nombreMembresia != null ? nombreMembresia : "Sin membresía",
+                    metodoPago != null ? metodoPago : "Sin especificar",
+                    monto,
+                    estadoTraducido
+                ));
+            }
+
+            return historial;
+        } catch (Exception e) {
+            log.error("❌ Error al generar historial de pagos detallado: {}", e.getMessage(), e);
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * 📊 REPORTE DE RETENCIÓN MENSUAL (HU-30)
+     * Calcula renovaciones y cancelaciones por mes para los últimos 12 meses.
+     * Fórmula retención: (renovaciones / (renovaciones + cancelaciones)) * 100
+     */
+    @Transactional(readOnly = true)
+    public List<RetencionMensualDTO> obtenerRetencionMensual() {
+        try {
+            log.info("📊 Generando reporte de retención mensual");
+
+            List<RetencionMensualDTO> reporte = new ArrayList<>();
+            YearMonth mesActual = YearMonth.now();
+
+            for (int i = 11; i >= 0; i--) {
+                YearMonth mes = mesActual.minusMonths(i);
+                LocalDate inicioMes = mes.atDay(1);
+                LocalDate finMes = mes.atEndOfMonth();
+
+                Instant inicioInstant = toInstant(inicioMes.atStartOfDay());
+                Instant finInstant = toInstant(finMes.atTime(23, 59, 59));
+
+                // Renovaciones del mes (desde tabla renovaciones)
+                long renovaciones = renovacionRepository.countRenovacionesEnRango(inicioInstant, finInstant);
+
+                // Cancelaciones del mes (clientes cuyo QR fue desactivado y vencimiento cae en ese mes)
+                Integer cancelaciones = clienteRepository.countCancelacionesInRange(inicioMes, finMes);
+                if (cancelaciones == null) cancelaciones = 0;
+
+                String nombreMes = mes.getMonth()
+                    .getDisplayName(TextStyle.FULL, new Locale("es", "ES"));
+                // Capitalizar primera letra
+                nombreMes = nombreMes.substring(0, 1).toUpperCase() + nombreMes.substring(1);
+
+                reporte.add(new RetencionMensualDTO(
+                    mes.getYear(),
+                    mes.getMonthValue(),
+                    nombreMes,
+                    (int) renovaciones,
+                    cancelaciones
+                ));
+            }
+
+            return reporte;
+        } catch (Exception e) {
+            log.error("❌ Error al generar reporte de retención: {}", e.getMessage(), e);
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * 📤 EXPORTAR HISTORIAL DE PAGOS A EXCEL (HU-30)
+     */
+    @Transactional(readOnly = true)
+    public byte[] exportarHistorialPagosExcel(String busqueda) {
+        try {
+            List<ReportePagoHistorialDTO> historial = obtenerHistorialPagosDetallado(busqueda);
+
+            try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                Sheet sheet = workbook.createSheet("Historial de Pagos");
+                CellStyle headerStyle = crearHeaderStyle(workbook);
+
+                String[] headers = {
+                    "ID Pago", "Fecha", "Hora", "Cliente", "Plan",
+                    "Método de Pago", "Monto (S/)", "Estado"
+                };
+
+                Row header = sheet.createRow(0);
+                for (int i = 0; i < headers.length; i++) {
+                    Cell cell = header.createCell(i);
+                    cell.setCellValue(headers[i]);
+                    cell.setCellStyle(headerStyle);
+                }
+
+                int rowIdx = 1;
+                for (ReportePagoHistorialDTO dto : historial) {
+                    Row row = sheet.createRow(rowIdx++);
+                    row.createCell(0).setCellValue(dto.getPagoId() != null ? dto.getPagoId() : 0);
+                    row.createCell(1).setCellValue(valueOrEmpty(dto.getFecha()));
+                    row.createCell(2).setCellValue(valueOrEmpty(dto.getHora()));
+                    row.createCell(3).setCellValue(valueOrEmpty(dto.getCliente()));
+                    row.createCell(4).setCellValue(valueOrEmpty(dto.getPlan()));
+                    row.createCell(5).setCellValue(valueOrEmpty(dto.getMetodo()));
+                    row.createCell(6).setCellValue(dto.getMonto() != null ? dto.getMonto() : 0.0);
+                    row.createCell(7).setCellValue(valueOrEmpty(dto.getEstado()));
+                }
+
+                for (int i = 0; i < headers.length; i++) {
+                    sheet.autoSizeColumn(i);
+                }
+
+                workbook.write(out);
+                return out.toByteArray();
+            }
+        } catch (Exception e) {
+            log.error("❌ Error al exportar historial de pagos a Excel: {}", e.getMessage(), e);
+            return new byte[0];
+        }
+    }
 }
+

@@ -4,7 +4,12 @@ import com.gimnasio.fit.dto.*;
 import com.gimnasio.fit.service.ReportesService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -321,5 +326,158 @@ public class ReportesController {
         List<ReporteRenovacionCancelacionDTO> reporte = reportesService.obtenerRenovacionesCancelaciones(inicio, fin);
         return ResponseEntity.ok(reporte);
     }
-}
 
+    // ========================================================================
+    // HU-28: REPORTE DE SUSCRIPCIONES (Paginado + Exportar Excel)
+    // ========================================================================
+
+    /**
+     * GET /api/reportes/suscripciones
+     * Listado paginado de suscripciones con filtros dinámicos (HU-28).
+     *
+     * @param estado           Estado: "activa", "vencida", "por_vencer" (opcional)
+     * @param fechaInicio      Fecha inicio rango vencimiento (opcional)
+     * @param fechaFin         Fecha fin rango vencimiento (opcional)
+     * @param diasAnticipacion Días para "por_vencer" (default 15)
+     * @param page             Número de página (default 0)
+     * @param size             Tamaño de página (default 10)
+     */
+    @GetMapping("/suscripciones")
+    @PreAuthorize("hasAnyRole('ADMIN', 'RECEPCIONISTA')")
+    public ResponseEntity<Page<ReporteSuscripcionDTO>> obtenerReporteSuscripciones(
+            @RequestParam(required = false) String estado,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaInicio,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaFin,
+            @RequestParam(required = false) Integer diasAnticipacion,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size
+    ) {
+        log.info("📋 GET /api/reportes/suscripciones?estado={}&fechaInicio={}&fechaFin={}&dias={}&page={}&size={}",
+                estado, fechaInicio, fechaFin, diasAnticipacion, page, size);
+        Pageable pageable = PageRequest.of(page, size);
+        Page<ReporteSuscripcionDTO> resultado = reportesService.obtenerReporteSuscripciones(
+                estado, fechaInicio, fechaFin, diasAnticipacion, pageable);
+        return ResponseEntity.ok(resultado);
+    }
+
+    /**
+     * GET /api/reportes/suscripciones/exportar
+     * Exporta suscripciones a Excel con los mismos filtros (HU-28).
+     */
+    @GetMapping("/suscripciones/exportar")
+    @PreAuthorize("hasAnyRole('ADMIN', 'RECEPCIONISTA')")
+    public ResponseEntity<byte[]> exportarSuscripcionesExcel(
+            @RequestParam(required = false) String estado,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaInicio,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaFin,
+            @RequestParam(required = false) Integer diasAnticipacion
+    ) {
+        log.info("📤 GET /api/reportes/suscripciones/exportar?estado={}&fechaInicio={}&fechaFin={}", estado, fechaInicio, fechaFin);
+
+        byte[] excelBytes = reportesService.exportarSuscripcionesExcel(estado, fechaInicio, fechaFin, diasAnticipacion);
+
+        if (excelBytes == null || excelBytes.length == 0) {
+            return ResponseEntity.noContent().build();
+        }
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=reporte_suscripciones.xlsx")
+                .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(excelBytes);
+    }
+
+    // ========================================================================
+    // HU-29: INGRESOS POR MÉTODO DE PAGO Y POR PLAN (formato frontend)
+    // ========================================================================
+
+    /**
+     * GET /api/reportes/ingresos/por-metodo
+     * Ingresos agrupados por método de pago (HU-29).
+     * Formato: [{metodo, total, cantidad, porcentaje}]
+     */
+    @GetMapping("/ingresos/por-metodo")
+    @PreAuthorize("hasAnyRole('ADMIN', 'RECEPCIONISTA')")
+    public ResponseEntity<List<IngresosPorMetodoDTO>> obtenerIngresosPorMetodo(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaInicio,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaFin
+    ) {
+        LocalDate inicio = fechaInicio != null ? fechaInicio : LocalDate.now().withDayOfMonth(1);
+        LocalDate fin = fechaFin != null ? fechaFin : LocalDate.now();
+
+        log.info("💳 GET /api/reportes/ingresos/por-metodo?fechaInicio={}&fechaFin={}", inicio, fin);
+        List<IngresosPorMetodoDTO> resultado = reportesService.obtenerIngresosPorMetodo(inicio, fin);
+        return ResponseEntity.ok(resultado);
+    }
+
+    /**
+     * GET /api/reportes/ingresos/por-plan
+     * Ingresos agrupados por plan de membresía (HU-29).
+     * Formato: [{plan, total, cantidad, porcentaje}]
+     */
+    @GetMapping("/ingresos/por-plan")
+    @PreAuthorize("hasAnyRole('ADMIN', 'RECEPCIONISTA')")
+    public ResponseEntity<List<IngresosPorPlanDTO>> obtenerIngresosPorPlan(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaInicio,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaFin
+    ) {
+        LocalDate inicio = fechaInicio != null ? fechaInicio : LocalDate.now().withDayOfMonth(1);
+        LocalDate fin = fechaFin != null ? fechaFin : LocalDate.now();
+
+        log.info("📊 GET /api/reportes/ingresos/por-plan?fechaInicio={}&fechaFin={}", inicio, fin);
+        List<IngresosPorPlanDTO> resultado = reportesService.obtenerIngresosPorPlan(inicio, fin);
+        return ResponseEntity.ok(resultado);
+    }
+
+    // ========================================================================
+    // HU-30: HISTORIAL DE PAGOS Y RETENCIÓN
+    // ========================================================================
+
+    /**
+     * GET /api/reportes/pagos/historial
+     * Historial detallado de pagos con buscador por nombre/teléfono (HU-30).
+     */
+    @GetMapping("/pagos/historial")
+    @PreAuthorize("hasAnyRole('ADMIN', 'RECEPCIONISTA')")
+    public ResponseEntity<List<ReportePagoHistorialDTO>> obtenerHistorialPagosDetallado(
+            @RequestParam(required = false, defaultValue = "") String busqueda
+    ) {
+        log.info("💳 GET /api/reportes/pagos/historial?busqueda={}", busqueda);
+        List<ReportePagoHistorialDTO> historial = reportesService.obtenerHistorialPagosDetallado(busqueda);
+        return ResponseEntity.ok(historial);
+    }
+
+    /**
+     * GET /api/reportes/retencion
+     * Reporte de retención mensual: renovaciones y cancelaciones por mes (HU-30).
+     */
+    @GetMapping("/retencion")
+    @PreAuthorize("hasAnyRole('ADMIN', 'RECEPCIONISTA')")
+    public ResponseEntity<List<RetencionMensualDTO>> obtenerRetencionMensual() {
+        log.info("📊 GET /api/reportes/retencion");
+        List<RetencionMensualDTO> reporte = reportesService.obtenerRetencionMensual();
+        return ResponseEntity.ok(reporte);
+    }
+
+    /**
+     * GET /api/reportes/pagos/historial/exportar
+     * Exporta historial de pagos a Excel (HU-30).
+     */
+    @GetMapping("/pagos/historial/exportar")
+    @PreAuthorize("hasAnyRole('ADMIN', 'RECEPCIONISTA')")
+    public ResponseEntity<byte[]> exportarHistorialPagosExcel(
+            @RequestParam(required = false, defaultValue = "") String busqueda
+    ) {
+        log.info("📤 GET /api/reportes/pagos/historial/exportar?busqueda={}", busqueda);
+
+        byte[] excelBytes = reportesService.exportarHistorialPagosExcel(busqueda);
+
+        if (excelBytes == null || excelBytes.length == 0) {
+            return ResponseEntity.noContent().build();
+        }
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=historial_pagos.xlsx")
+                .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(excelBytes);
+    }
+}

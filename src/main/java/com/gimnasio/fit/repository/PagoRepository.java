@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 
@@ -16,13 +17,13 @@ public interface PagoRepository extends JpaRepository<Pago, Long> {
      * Suma el monto total de pagos aprobados en un rango de fechas.
      * Usa Instant porque Pago.fechaRegistro es de tipo Instant.
      */
-    @Query("SELECT SUM(p.montoFinal) FROM Pago p WHERE p.fechaRegistro BETWEEN :inicio AND :fin AND p.estado = 'aprobado'")
-    Double sumMontoByFechaBetween(@Param("inicio") Instant inicio, @Param("fin") Instant fin);
+    @Query("SELECT SUM(p.montoFinal) FROM Pago p WHERE p.fechaRegistro BETWEEN :inicio AND :fin AND p.estado IN ('aprobado', 'approved', 'COMPLETADO', 'COMPLETED')")
+    BigDecimal sumMontoByFechaBetween(@Param("inicio") Instant inicio, @Param("fin") Instant fin);
 
     /**
      * Obtiene los últimos 5 pagos por estado ordenados por fecha descendente.
      */
-    List<Pago> findTop5ByEstadoOrderByFechaRegistroDesc(String estado);
+    List<Pago> findTop5ByEstadoInOrderByFechaRegistroDesc(List<String> estados);
 
     /**
      * Cuenta la cantidad de pagos en un rango de fechas.
@@ -33,7 +34,7 @@ public interface PagoRepository extends JpaRepository<Pago, Long> {
      * Suma el monto total de pagos por estado en un rango de fechas.
      */
     @Query("SELECT SUM(p.montoFinal) FROM Pago p WHERE p.estado = :estado AND p.fechaRegistro BETWEEN :inicio AND :fin")
-    Double sumMontoByEstadoAndFechaBetween(
+    BigDecimal sumMontoByEstadoAndFechaBetween(
         @Param("estado") String estado, 
         @Param("inicio") Instant inicio, 
         @Param("fin") Instant fin
@@ -56,7 +57,7 @@ public interface PagoRepository extends JpaRepository<Pago, Long> {
      */
     @Query("SELECT p.cliente.membresiaActual.nombre, SUM(p.montoFinal) " +
            "FROM Pago p " +
-           "WHERE p.estado = 'aprobado' " +
+           "WHERE p.estado IN ('aprobado', 'approved', 'COMPLETADO', 'COMPLETED') " +
            "AND p.fechaRegistro BETWEEN :inicio AND :fin " +
            "GROUP BY p.cliente.membresiaActual.nombre " +
            "ORDER BY SUM(p.montoFinal) DESC")
@@ -71,7 +72,7 @@ public interface PagoRepository extends JpaRepository<Pago, Long> {
      */
     @Query("SELECT p.metodoPago, SUM(p.montoFinal), COUNT(p) " +
            "FROM Pago p " +
-           "WHERE p.estado = 'aprobado' " +
+           "WHERE p.estado IN ('aprobado', 'approved', 'COMPLETADO', 'COMPLETED') " +
            "AND p.fechaRegistro BETWEEN :inicio AND :fin " +
            "GROUP BY p.metodoPago " +
            "ORDER BY SUM(p.montoFinal) DESC")
@@ -84,11 +85,42 @@ public interface PagoRepository extends JpaRepository<Pago, Long> {
      * Cuenta pagos realizados en un rango de fechas con estado aprobado.
      */
     @Query("SELECT COUNT(p) FROM Pago p " +
-           "WHERE p.estado = 'aprobado' " +
+           "WHERE p.estado IN ('aprobado', 'approved', 'COMPLETADO', 'COMPLETED') " +
            "AND p.fechaRegistro BETWEEN :inicio AND :fin")
     Integer countPagosRealizadosInRange(
         @Param("inicio") Instant inicio, 
         @Param("fin") Instant fin
     );
+
+    /**
+     * Suma ingresos agrupados por plan (nombre de membresía) con conteo (HU-29).
+     * Retorna: [planNombre, SUM(montoFinal), COUNT(*)]
+     */
+    @Query("SELECT COALESCE(m.nombre, p.planNombre), SUM(p.montoFinal), COUNT(p) " +
+           "FROM Pago p " +
+           "LEFT JOIN p.membresia m " +
+           "WHERE p.estado IN ('aprobado', 'approved', 'COMPLETADO', 'COMPLETED') " +
+           "AND p.fechaRegistro BETWEEN :inicio AND :fin " +
+           "GROUP BY COALESCE(m.nombre, p.planNombre) " +
+           "ORDER BY SUM(p.montoFinal) DESC")
+    List<Object[]> sumMontoByPlanAndFechaBetween(
+        @Param("inicio") Instant inicio, 
+        @Param("fin") Instant fin
+    );
+
+    /**
+     * Obtiene historial de pagos con filtro opcional por nombre/teléfono (HU-30).
+     * Retorna: [pagoId, fechaRegistro, nombreCliente, apellidoCliente, nombreMembresia, metodoPago, montoFinal, estado]
+     */
+    @Query("SELECT p.id, p.fechaRegistro, p.cliente.nombre, p.cliente.apellido, " +
+           "COALESCE(m.nombre, p.planNombre), p.metodoPago, p.montoFinal, p.estado " +
+           "FROM Pago p " +
+           "LEFT JOIN p.membresia m " +
+           "WHERE (:busqueda IS NULL OR :busqueda = '' " +
+           "  OR LOWER(p.cliente.nombre) LIKE LOWER(CONCAT('%', :busqueda, '%')) " +
+           "  OR LOWER(p.cliente.apellido) LIKE LOWER(CONCAT('%', :busqueda, '%')) " +
+           "  OR p.cliente.telefono LIKE CONCAT('%', :busqueda, '%')) " +
+           "ORDER BY p.fechaRegistro DESC")
+    List<Object[]> obtenerHistorialPagosFiltrado(@Param("busqueda") String busqueda);
 }
 

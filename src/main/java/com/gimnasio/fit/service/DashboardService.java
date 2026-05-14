@@ -12,6 +12,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.TextStyle;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -48,11 +49,11 @@ public class DashboardService {
             // Ingresos del mes actual
             LocalDate inicioMes = hoy.withDayOfMonth(1);
             LocalDate finMes = hoy.withDayOfMonth(hoy.lengthOfMonth());
-            Double ingresosMes = pagoRepository.sumMontoByFechaBetween(
+            BigDecimal ingresosMesBd = pagoRepository.sumMontoByFechaBetween(
                 toInstant(inicioMes.atStartOfDay()), 
                 toInstant(finMes.atTime(23, 59, 59))
             );
-            if (ingresosMes == null) ingresosMes = 0.0;
+            Double ingresosMes = (ingresosMesBd != null) ? ingresosMesBd.doubleValue() : 0.0;
 
             // Asistencias del día actual
             Integer asistenciasHoy = asistenciaRepository.countByFechaHoraBetween(
@@ -101,8 +102,8 @@ public class DashboardService {
             Instant inicio = toInstant(fecha.atStartOfDay());
             Instant fin = toInstant(fecha.atTime(23, 59, 59));
 
-            Double ingresos = pagoRepository.sumMontoByFechaBetween(inicio, fin);
-            if (ingresos == null) ingresos = 0.0;
+            BigDecimal ingresosBd = pagoRepository.sumMontoByFechaBetween(inicio, fin);
+            Double ingresos = (ingresosBd != null) ? ingresosBd.doubleValue() : 0.0;
 
             // Formato: "Lun", "Mar", etc.
             String nombreDia = fecha.getDayOfWeek()
@@ -165,7 +166,7 @@ public class DashboardService {
 
         try {
             // Últimos 5 pagos aprobados
-            var ultimosPagos = pagoRepository.findTop5ByEstadoOrderByFechaRegistroDesc("approved");
+            var ultimosPagos = pagoRepository.findTop5ByEstadoInOrderByFechaRegistroDesc(java.util.Arrays.asList("aprobado", "approved", "COMPLETADO", "COMPLETED"));
             if (ultimosPagos != null) {
                 for (var pago : ultimosPagos) {
                     if (pago == null || pago.getCliente() == null) continue;
@@ -223,6 +224,80 @@ public class DashboardService {
             .sorted((a, b) -> b.getId().compareTo(a.getId()))
             .limit(10)
             .collect(Collectors.toList());
+    }
+
+    /**
+     * Obtiene la tendencia de asistencias de los últimos N días (HU-26).
+     * Agrupa las asistencias totales por fecha.
+     * 
+     * @param dias Cantidad de días hacia atrás (7 o 30)
+     * @return Lista de AsistenciaTendenciaDTO con fecha y cantidad
+     */
+    @Transactional(readOnly = true)
+    public List<AsistenciaTendenciaDTO> obtenerTendenciaAsistencias(int dias) {
+        try {
+            List<AsistenciaTendenciaDTO> resultado = new ArrayList<>();
+            LocalDate hoy = LocalDate.now();
+
+            for (int i = dias - 1; i >= 0; i--) {
+                LocalDate fecha = hoy.minusDays(i);
+                LocalDateTime inicio = fecha.atStartOfDay();
+                LocalDateTime fin = fecha.atTime(23, 59, 59);
+
+                Integer cantidad = asistenciaRepository.countByFechaHoraBetween(inicio, fin);
+                if (cantidad == null) cantidad = 0;
+
+                // Formato corto: "Lun", "Mar", etc.
+                String nombreDia = fecha.getDayOfWeek()
+                    .getDisplayName(TextStyle.SHORT, new Locale("es", "ES"));
+
+                resultado.add(new AsistenciaTendenciaDTO(nombreDia, cantidad));
+            }
+
+            return resultado;
+        } catch (Exception e) {
+            log.error("❌ Error al obtener tendencia de asistencias: {}", e.getMessage(), e);
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * Obtiene el ranking de los clientes con más asistencias del mes actual (HU-26).
+     * 
+     * @param limite Cantidad máxima de clientes a retornar (ej: 5 o 10)
+     * @return Lista de TopClienteDTO con id, nombre y asistencias
+     */
+    @Transactional(readOnly = true)
+    public List<TopClienteDTO> obtenerTopClientes(int limite) {
+        try {
+            LocalDate hoy = LocalDate.now();
+            int anio = hoy.getYear();
+            int mes = hoy.getMonthValue();
+
+            List<Object[]> resultados = asistenciaRepository.findTopClientesByMonth(anio, mes);
+            List<TopClienteDTO> topClientes = new ArrayList<>();
+
+            int count = 0;
+            for (Object[] fila : resultados) {
+                if (count >= limite) break;
+
+                Long clienteId = (Long) fila[0];
+                Long totalAsistencias = (Long) fila[1];
+
+                // Buscar nombre del cliente
+                String nombreCompleto = clienteRepository.findById(clienteId)
+                    .map(c -> c.getNombreCompleto())
+                    .orElse("Cliente #" + clienteId);
+
+                topClientes.add(new TopClienteDTO(clienteId, nombreCompleto, totalAsistencias.intValue()));
+                count++;
+            }
+
+            return topClientes;
+        } catch (Exception e) {
+            log.error("❌ Error al obtener top clientes: {}", e.getMessage(), e);
+            return new ArrayList<>();
+        }
     }
 
     /**

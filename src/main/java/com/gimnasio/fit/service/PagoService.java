@@ -57,6 +57,7 @@ public class PagoService {
     private final com.gimnasio.fit.repository.MembresiaRepository membresiaRepository;
     private final com.gimnasio.fit.repository.UsuarioRepository usuarioRepository;
     private final com.gimnasio.fit.repository.RenovacionRepository renovacionRepository;
+    private final com.gimnasio.fit.repository.HistorialPagoFallidoRepository historialPagoFallidoRepository;
 
     public PagoResponseDto crearPreferencia(PagoRequestDto dto) throws Exception {
         try {
@@ -191,6 +192,9 @@ public class PagoService {
             actualizarMembresiaCliente(pago.getCliente(), pago.getPlanDias(), membresiaId, 
                     pago.getMontoFinal(), "MercadoPago");
             
+            // 📧 Enviar notificación de pago aprobado
+            notificationService.notificarPagoAprobado(pago.getCliente(), pago);
+            
             log.info("✅ Webhook procesado exitosamente - Cliente {} ahora tiene membresía activa", 
                     pago.getCliente().getId());
 
@@ -308,6 +312,12 @@ public class PagoService {
                 
                 // 📧 Enviar notificación de pago aprobado (email + SMS)
                 notificationService.notificarPagoAprobado(cliente, pago);
+            } else if ("rejected".equals(payment.getStatus()) || "cancelled".equals(payment.getStatus())) {
+                // ⚠️ HU-33: Pago rechazado - enviar alerta y registrar fallo
+                String motivo = traducirStatusDetail(payment.getStatusDetail());
+                registrarPagoFallido(cliente, pago, payment.getStatus(), motivo, 
+                        new BigDecimal(dto.getMonto()), "Yape");
+                log.warn("⚠️ Pago Yape rechazado para cliente {}: {}", cliente.getId(), motivo);
             }
 
             // 📤 Devolver respuesta
@@ -622,6 +632,44 @@ public class PagoService {
         } catch (Exception e) {
             log.error("❌ Error al obtener usuario autenticado: {}", e.getMessage());
             return null;
+        }
+    }
+
+    /**
+     * Registra un pago fallido en el historial y envía alerta al cliente (HU-33).
+     * 
+     * @param cliente     Cliente afectado
+     * @param pago        Pago rechazado/pendiente
+     * @param estado      Estado del pago ("rejected", "cancelled", "pending")
+     * @param motivo      Motivo traducido del fallo
+     * @param monto       Monto que se intentó pagar
+     * @param metodoPago  Método de pago utilizado
+     */
+    private void registrarPagoFallido(Cliente cliente, Pago pago, String estado, 
+                                       String motivo, java.math.BigDecimal monto, String metodoPago) {
+        try {
+            // 1. Registrar en historial de pagos fallidos
+            com.gimnasio.fit.entity.HistorialPagoFallido historial = com.gimnasio.fit.entity.HistorialPagoFallido.builder()
+                    .cliente(cliente)
+                    .pago(pago)
+                    .estadoPago(estado)
+                    .motivoDetalle(motivo)
+                    .montoIntentado(monto)
+                    .metodoPago(metodoPago)
+                    .notificacionEnviada(false)
+                    .build();
+
+            // 2. Enviar email de alerta (asíncrono)
+            boolean emailEnviado = notificationService.notificarPagoFallido(cliente, pago, motivo);
+            historial.setNotificacionEnviada(emailEnviado);
+
+            // 3. Guardar historial
+            historialPagoFallidoRepository.save(historial);
+            log.info("📋 Pago fallido registrado en historial - Cliente: {}, Estado: {}, Email enviado: {}", 
+                    cliente.getId(), estado, emailEnviado);
+
+        } catch (Exception e) {
+            log.error("❌ Error al registrar pago fallido: {}", e.getMessage(), e);
         }
     }
 }

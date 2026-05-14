@@ -305,4 +305,138 @@ public class NotificationService {
             log.error("❌ Error al enviar SMS de reembolso: {}", e.getMessage());
         }
     }
+
+    /**
+     * Envía notificación de pago fallido/rechazado al cliente (HU-33).
+     * Se ejecuta de forma asíncrona para no bloquear el flujo principal.
+     * 
+     * @param cliente Cliente afectado
+     * @param pago    Pago rechazado/pendiente
+     * @param motivo  Detalle del motivo del fallo
+     * @return true si se envió correctamente
+     */
+    @Async
+    public boolean notificarPagoFallido(Cliente cliente, Pago pago, String motivo) {
+        try {
+            log.info("⚠️ Enviando notificación de pago fallido a cliente: {}", cliente.getId());
+
+            // Leer configuración
+            ConfiguracionNotificacion config = configRepository.findFirstByOrderByIdAsc().orElse(null);
+            boolean emailActivo = (config != null && config.getEmailEnabled() != null) ? config.getEmailEnabled() : emailEnabled;
+
+            if (!emailActivo) {
+                log.info("📧 Email deshabilitado. No se envía alerta de pago fallido.");
+                return false;
+            }
+
+            if (cliente.getEmail() == null || cliente.getEmail().isBlank()) {
+                log.warn("⚠️ Cliente {} no tiene email. No se envía alerta.", cliente.getId());
+                return false;
+            }
+
+            // Enviar email HTML
+            String from = (config != null && config.getEmailFrom() != null && !config.getEmailFrom().isBlank())
+                    ? config.getEmailFrom() : emailFrom;
+
+            jakarta.mail.internet.MimeMessage mimeMessage = mailSender.createMimeMessage();
+            org.springframework.mail.javamail.MimeMessageHelper helper = 
+                new org.springframework.mail.javamail.MimeMessageHelper(mimeMessage, true, "UTF-8");
+
+            helper.setFrom(from);
+            helper.setTo(cliente.getEmail());
+            helper.setSubject("⚠️ Problema con tu pago - VIP Center Fit");
+            helper.setText(construirEmailPagoFallido(cliente, pago, motivo), true);
+
+            mailSender.send(mimeMessage);
+            log.info("✅ Email de alerta de pago fallido enviado a: {}", cliente.getEmail());
+            return true;
+
+        } catch (Exception e) {
+            log.error("❌ Error al enviar notificación de pago fallido: {}", e.getMessage(), e);
+            return false;
+        }
+    }
+
+    /**
+     * Construye el cuerpo HTML del email de alerta de pago fallido (HU-33).
+     */
+    private String construirEmailPagoFallido(Cliente cliente, Pago pago, String motivo) {
+        String montoStr = pago.getMontoFinal() != null ? String.format("S/ %.2f", pago.getMontoFinal()) : "N/A";
+        String planStr = pago.getPlanNombre() != null ? pago.getPlanNombre() : "Membresía";
+        String motivoStr = motivo != null ? motivo : "Motivo no especificado";
+        String estadoStr = pago.getEstado() != null ? pago.getEstado() : "rechazado";
+
+        return String.format("""
+            <!DOCTYPE html>
+            <html>
+            <head><meta charset="UTF-8"></head>
+            <body style="margin:0; padding:0; font-family: 'Segoe UI', Arial, sans-serif; background-color: #f3f4f6;">
+                <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
+                    <!-- Header -->
+                    <div style="background: linear-gradient(135deg, #dc2626 0%%, #991b1b 100%%); padding: 30px; text-align: center;">
+                        <h1 style="color: #ffffff; margin: 0; font-size: 24px;">⚠️ Problema con tu pago</h1>
+                        <p style="color: #fecaca; margin: 8px 0 0 0; font-size: 14px;">VIP Center Fit</p>
+                    </div>
+
+                    <!-- Content -->
+                    <div style="padding: 30px;">
+                        <h2 style="color: #1f2937; margin-top: 0;">Hola %s,</h2>
+
+                        <p style="color: #4b5563; line-height: 1.6;">
+                            Lamentamos informarte que tu pago no pudo ser procesado correctamente.
+                        </p>
+
+                        <div style="background-color: #fef2f2; border-left: 4px solid #dc2626; border-radius: 4px; padding: 16px; margin: 20px 0;">
+                            <p style="color: #991b1b; margin: 0; font-weight: bold;">Estado: %s</p>
+                            <p style="color: #7f1d1d; margin: 8px 0 0 0;">Motivo: %s</p>
+                        </div>
+
+                        <div style="background-color: #f9fafb; border-radius: 8px; padding: 20px; margin: 20px 0;">
+                            <h3 style="color: #4b5563; margin-top: 0;">📋 Detalles del pago:</h3>
+                            <table style="width: 100%%; border-collapse: collapse;">
+                                <tr>
+                                    <td style="padding: 8px 0; color: #6b7280;">Plan:</td>
+                                    <td style="padding: 8px 0; color: #1f2937; font-weight: bold; text-align: right;">%s</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 8px 0; color: #6b7280;">Monto:</td>
+                                    <td style="padding: 8px 0; color: #1f2937; font-weight: bold; text-align: right;">%s</td>
+                                </tr>
+                            </table>
+                        </div>
+
+                        <p style="color: #4b5563; line-height: 1.6;">
+                            <strong>¿Qué puedes hacer?</strong>
+                        </p>
+                        <ul style="color: #4b5563; line-height: 1.8;">
+                            <li>Verifica que tu tarjeta tenga fondos suficientes</li>
+                            <li>Actualiza tu método de pago e intenta nuevamente</li>
+                            <li>Contacta a tu banco si el problema persiste</li>
+                            <li>Visítanos en recepción para pagar en efectivo o por Yape</li>
+                        </ul>
+
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="#" style="display: inline-block; background: linear-gradient(135deg, #7c3aed, #4f46e5); color: #ffffff; text-decoration: none; padding: 14px 36px; border-radius: 8px; font-weight: bold; font-size: 16px;">
+                                Reintentar Pago
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- Footer -->
+                    <div style="background-color: #1f2937; padding: 20px 30px; text-align: center;">
+                        <p style="color: #9ca3af; margin: 0; font-size: 12px;">
+                            VIP Center Fit — Este es un mensaje automático. Por favor no responda a este correo.
+                        </p>
+                    </div>
+                </div>
+            </body>
+            </html>
+            """,
+                cliente.getNombreCompleto(),
+                estadoStr.toUpperCase(),
+                motivoStr,
+                planStr,
+                montoStr
+        );
+    }
 }

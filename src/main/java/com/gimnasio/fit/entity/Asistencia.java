@@ -60,6 +60,14 @@ public class Asistencia {
     @Column(columnDefinition = "TEXT")
     private String notas;
 
+    /**
+     * Hora de salida del gimnasio.
+     * NULL = aún en el gimnasio (o no marcó salida).
+     * Se puede marcar manualmente por recepcionista o automáticamente tras 5h.
+     */
+    @Column(name = "hora_salida")
+    private LocalDateTime horaSalida;
+
     @PrePersist
     protected void onCreate() {
         if (fechaHora == null) {

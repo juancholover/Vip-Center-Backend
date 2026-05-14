@@ -50,6 +50,13 @@ public class Cliente {
     private String email;
 
     /**
+     * Documento Nacional de Identidad del cliente.
+     * Opcional — usado para emitir boletas.
+     */
+    @Column(length = 20)
+    private String dni;
+
+    /**
      * Código QR único para acceso al gimnasio.
      * - Se genera SOLO en el primer pago confirmado
      * - NULL hasta que se realice el primer pago
@@ -99,6 +106,14 @@ public class Cliente {
     @org.hibernate.annotations.CreationTimestamp
     private Instant fechaRegistro;
 
+    /**
+     * Estado de seguimiento para la bandeja de recepción (HU-32).
+     * Valores: "PENDIENTE", "LLAMADO", "PROMESA"
+     * Usado por recepcionistas para trackear el contacto con clientes próximos a vencer.
+     */
+    @Column(name = "estado_seguimiento", length = 20)
+    private String estadoSeguimiento = "PENDIENTE";
+
     // ====================================
     // Métodos de conveniencia
     // ====================================
@@ -108,12 +123,13 @@ public class Cliente {
      * - fecha_vencimiento
      * - qr_activo
      * 
-     * @return Estado: "activo", "vencido", "sin_membresia", "qr_deshabilitado"
+     * @return Estado: "activo", "vencido", "qr_deshabilitado"
+     * NOTA: "sin_membresia" fue reemplazado por "vencido" (solicitado por el cliente)
      */
     @Transient
     public String getEstado() {
         if (fechaVencimiento == null) {
-            return "sin_membresia";
+            return "vencido";
         }
         if (!qrActivo) {
             return "qr_deshabilitado";

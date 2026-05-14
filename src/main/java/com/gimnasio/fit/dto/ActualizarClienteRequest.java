@@ -28,4 +28,7 @@ public class ActualizarClienteRequest {
     @Email(message = "El email debe tener un formato válido")
     @Size(max = 100, message = "El email no puede exceder 100 caracteres")
     private String email;
+
+    @Size(max = 20, message = "El DNI no puede exceder 20 caracteres")
+    private String dni;
 }

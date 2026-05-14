@@ -69,4 +69,36 @@ public class DashboardController {
         List<ActividadRecienteDTO> actividades = dashboardService.obtenerActividadReciente();
         return ResponseEntity.ok(actividades);
     }
+
+    /**
+     * GET /api/dashboard/asistencias-tendencia
+     * Obtiene la tendencia de asistencias agrupadas por día (HU-26).
+     * 
+     * @param dias Cantidad de días hacia atrás (default: 7, opciones: 7 o 30)
+     */
+    @GetMapping("/asistencias-tendencia")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<AsistenciaTendenciaDTO>> obtenerTendenciaAsistencias(
+            @RequestParam(defaultValue = "7") Integer dias
+    ) {
+        log.info("📈 GET /api/dashboard/asistencias-tendencia?dias={}", dias);
+        List<AsistenciaTendenciaDTO> tendencia = dashboardService.obtenerTendenciaAsistencias(dias);
+        return ResponseEntity.ok(tendencia);
+    }
+
+    /**
+     * GET /api/dashboard/top-clientes
+     * Obtiene el ranking de clientes con más asistencias del mes actual (HU-26).
+     * 
+     * @param limite Cantidad máxima de clientes (default: 10)
+     */
+    @GetMapping("/top-clientes")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<TopClienteDTO>> obtenerTopClientes(
+            @RequestParam(defaultValue = "10") Integer limite
+    ) {
+        log.info("🏆 GET /api/dashboard/top-clientes?limite={}", limite);
+        List<TopClienteDTO> topClientes = dashboardService.obtenerTopClientes(limite);
+        return ResponseEntity.ok(topClientes);
+    }
 }

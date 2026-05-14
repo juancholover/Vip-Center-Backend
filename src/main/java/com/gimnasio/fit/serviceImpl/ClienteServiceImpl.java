@@ -50,6 +50,7 @@ public class ClienteServiceImpl implements ClienteService {
         cliente.setApellido(request.getApellido());
         cliente.setTelefono(telefonoNormalizado);
         cliente.setEmail(request.getEmail());
+        cliente.setDni(request.getDni());
         
         // 🔑 GENERAR QR DE ACCESO OPTIMIZADO (UUID sin guiones para QR más simple)
         cliente.setQrAcceso(QRCodeGenerator.generateOptimizedQR());
@@ -91,6 +92,7 @@ public class ClienteServiceImpl implements ClienteService {
         }
 
         if (request.getEmail() != null) cliente.setEmail(request.getEmail());
+        if (request.getDni() != null) cliente.setDni(request.getDni());
 
         Cliente actualizado = clienteRepository.save(cliente);
         return mapearAResponse(actualizado);
@@ -298,6 +300,7 @@ public class ClienteServiceImpl implements ClienteService {
                 .nombreCompleto(cliente.getNombreCompleto())
                 .telefono(cliente.getTelefono())
                 .email(cliente.getEmail())
+                .dni(cliente.getDni())
                 .estado(cliente.getEstado())
                 .fechaVencimiento(cliente.getFechaVencimiento())
                 .qrActivo(cliente.getQrActivo())

@@ -1,8 +1,11 @@
 package com.gimnasio.fit.controller;
 
 import com.gimnasio.fit.dto.AsistenciaDTO;
+import com.gimnasio.fit.dto.PresenciaGimnasioDTO;
 import com.gimnasio.fit.dto.RegistrarAsistenciaManualRequest;
 import com.gimnasio.fit.dto.RegistrarAsistenciaResponse;
+import com.gimnasio.fit.entity.Asistencia;
+import com.gimnasio.fit.repository.AsistenciaRepository;
 import com.gimnasio.fit.service.AsistenciaService;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -13,9 +16,14 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +38,7 @@ import java.util.Map;
 public class AsistenciaController {
 
     private final AsistenciaService asistenciaService;
+    private final AsistenciaRepository asistenciaRepository;
     private final com.gimnasio.fit.utils.SimpleRateLimiter rateLimiter;
 
     /**
@@ -331,5 +340,99 @@ public class AsistenciaController {
             ip = ip.split(",")[0].trim();
         }
         return ip;
+    }
+
+    // =====================================================
+    // 🏋️ CONTROL DE PRESENCIA (Quién está en el gimnasio)
+    // =====================================================
+
+    /**
+     * GET /api/asistencia/presentes-ahora
+     * Obtiene la lista de clientes que están actualmente en el gimnasio.
+     * Auto-marca como "salió" a quienes llevan más de 5 horas sin marcar salida.
+     */
+    @GetMapping("/presentes-ahora")
+    @PreAuthorize("hasAnyRole('ADMIN', 'RECEPCIONISTA')")
+    @Transactional
+    public ResponseEntity<PresenciaGimnasioDTO> obtenerPresentesAhora() {
+        log.info("🏋️ GET /api/asistencia/presentes-ahora");
+
+        LocalDateTime ahora = LocalDateTime.now();
+        LocalDateTime inicioDia = LocalDate.now().atStartOfDay();
+
+        // Auto-marcar salida de quienes llevan más de 5 horas
+        LocalDateTime limite5h = ahora.minusHours(5);
+        int autoSalidas = asistenciaRepository.marcarSalidaAutomatica(ahora, limite5h);
+        if (autoSalidas > 0) {
+            log.info("🔄 Auto-marcadas {} salidas (>5h sin checkout)", autoSalidas);
+        }
+
+        // Consultar presentes actuales
+        List<Object[]> resultados = asistenciaRepository.obtenerClientesPresentesAhora(inicioDia);
+        List<PresenciaGimnasioDTO.ClientePresenteDTO> presentes = new ArrayList<>();
+        DateTimeFormatter horaFmt = DateTimeFormatter.ofPattern("HH:mm");
+
+        for (Object[] fila : resultados) {
+            Long asistenciaId = (Long) fila[0];
+            Long clienteId = (Long) fila[1];
+            String nombre = (String) fila[2];
+            String apellido = (String) fila[3];
+            LocalDateTime horaEntrada = (LocalDateTime) fila[4];
+            String membresia = (String) fila[5];
+
+            // Calcular tiempo transcurrido
+            Duration duracion = Duration.between(horaEntrada, ahora);
+            long horas = duracion.toHours();
+            long minutos = duracion.toMinutesPart();
+            String tiempoStr = horas > 0
+                    ? String.format("%dh %dmin", horas, minutos)
+                    : String.format("%dmin", minutos);
+
+            presentes.add(new PresenciaGimnasioDTO.ClientePresenteDTO(
+                    asistenciaId,
+                    clienteId,
+                    nombre + " " + apellido,
+                    horaEntrada.format(horaFmt),
+                    tiempoStr,
+                    membresia
+            ));
+        }
+
+        return ResponseEntity.ok(new PresenciaGimnasioDTO(presentes.size(), presentes));
+    }
+
+    /**
+     * PATCH /api/asistencia/{id}/marcar-salida
+     * Recepcionista marca la salida de un cliente manualmente.
+     */
+    @PatchMapping("/{id}/marcar-salida")
+    @PreAuthorize("hasAnyRole('ADMIN', 'RECEPCIONISTA')")
+    @Transactional
+    public ResponseEntity<Map<String, Object>> marcarSalida(@PathVariable Long id) {
+        log.info("🚪 PATCH /api/asistencia/{}/marcar-salida", id);
+
+        Asistencia asistencia = asistenciaRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Asistencia no encontrada con ID: " + id));
+
+        if (asistencia.getHoraSalida() != null) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "Esta asistencia ya tiene hora de salida registrada"));
+        }
+
+        LocalDateTime ahora = LocalDateTime.now();
+        asistencia.setHoraSalida(ahora);
+        asistenciaRepository.save(asistencia);
+
+        DateTimeFormatter horaFmt = DateTimeFormatter.ofPattern("HH:mm");
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("asistenciaId", id);
+        response.put("clienteNombre", asistencia.getCliente().getNombreCompleto());
+        response.put("horaEntrada", asistencia.getFechaHora().format(horaFmt));
+        response.put("horaSalida", ahora.format(horaFmt));
+        response.put("mensaje", "Salida registrada correctamente");
+
+        log.info("✅ Salida registrada para asistencia ID: {} a las {}", id, ahora.format(horaFmt));
+        return ResponseEntity.ok(response);
     }
 }

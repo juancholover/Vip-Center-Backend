@@ -2,6 +2,7 @@ package com.gimnasio.fit.repository;
 
 import com.gimnasio.fit.entity.Cliente;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -11,7 +12,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
-public interface ClienteRepository extends JpaRepository<Cliente, Long> {
+public interface ClienteRepository extends JpaRepository<Cliente, Long>, JpaSpecificationExecutor<Cliente> {
 
     /**
      * Busca cliente por teléfono (útil para registro/búsqueda rápida).
@@ -220,5 +221,15 @@ public interface ClienteRepository extends JpaRepository<Cliente, Long> {
         @Param("inicioMes") LocalDate inicioMes,
         @Param("finMes") LocalDate finMes
     );
+
+    /**
+     * Busca clientes cuya membresía vence en una fecha específica (HU-31).
+     * Usado por el scheduler de recordatorios de vencimiento.
+     * Solo retorna clientes con QR activo (membresía vigente).
+     */
+    @Query("SELECT c FROM Cliente c " +
+           "WHERE c.fechaVencimiento = :fecha " +
+           "AND c.qrActivo = true")
+    List<Cliente> findByFechaVencimiento(@Param("fecha") LocalDate fecha);
 }
 

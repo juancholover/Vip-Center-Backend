@@ -183,5 +183,54 @@ public interface AsistenciaRepository extends JpaRepository<Asistencia, Long> {
            "FROM Asistencia a " +
            "ORDER BY a.fechaHora DESC")
     List<Object[]> obtenerAsistenciasRecientes(@Param("limite") Integer limite);
+
+    /**
+     * Obtiene TODOS los clientes activos con su última fecha de asistencia (HU-34).
+     * Usa LEFT JOIN para incluir clientes que nunca han asistido.
+     * Retorna: [clienteId, nombre, apellido, telefono, email, nombreMembresia, fechaVencimiento, MAX(fechaHora)]
+     */
+    @Query("SELECT " +
+           "c.id, " +
+           "c.nombre, " +
+           "c.apellido, " +
+           "c.telefono, " +
+           "c.email, " +
+           "COALESCE(m.nombre, 'Sin membresía'), " +
+           "c.fechaVencimiento, " +
+           "MAX(a.fechaHora) " +
+           "FROM Cliente c " +
+           "LEFT JOIN c.membresiaActual m " +
+           "LEFT JOIN Asistencia a ON a.cliente.id = c.id " +
+           "WHERE c.qrActivo = true " +
+           "GROUP BY c.id, c.nombre, c.apellido, c.telefono, c.email, m.nombre, c.fechaVencimiento " +
+           "ORDER BY COALESCE(MAX(a.fechaHora), CAST('2000-01-01' AS timestamp)) ASC")
+    List<Object[]> obtenerClientesConUltimaAsistencia();
+
+    /**
+     * Obtiene clientes que están actualmente en el gimnasio (Control de Presencia).
+     * Son los que registraron entrada HOY y no tienen hora_salida.
+     * Retorna: [asistenciaId, clienteId, nombre, apellido, fechaHora(entrada), nombreMembresia]
+     */
+    @Query("SELECT " +
+           "a.id, " +
+           "a.cliente.id, " +
+           "a.cliente.nombre, " +
+           "a.cliente.apellido, " +
+           "a.fechaHora, " +
+           "COALESCE(a.cliente.membresiaActual.nombre, 'Sin plan') " +
+           "FROM Asistencia a " +
+           "WHERE a.fechaHora >= :inicioDia " +
+           "AND a.horaSalida IS NULL " +
+           "ORDER BY a.fechaHora ASC")
+    List<Object[]> obtenerClientesPresentesAhora(@Param("inicioDia") LocalDateTime inicioDia);
+
+    /**
+     * Marca salida automática para asistencias sin hora_salida que tienen más de X horas.
+     */
+    @Modifying
+    @Query("UPDATE Asistencia a SET a.horaSalida = :ahora " +
+           "WHERE a.horaSalida IS NULL " +
+           "AND a.fechaHora < :limite")
+    int marcarSalidaAutomatica(@Param("ahora") LocalDateTime ahora, @Param("limite") LocalDateTime limite);
 }
 
