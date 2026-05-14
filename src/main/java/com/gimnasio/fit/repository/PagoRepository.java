@@ -91,36 +91,5 @@ public interface PagoRepository extends JpaRepository<Pago, Long> {
         @Param("inicio") Instant inicio, 
         @Param("fin") Instant fin
     );
-
-    /**
-     * Suma ingresos agrupados por plan (nombre de membresía) con conteo (HU-29).
-     * Retorna: [planNombre, SUM(montoFinal), COUNT(*)]
-     */
-    @Query("SELECT COALESCE(m.nombre, p.planNombre), SUM(p.montoFinal), COUNT(p) " +
-           "FROM Pago p " +
-           "LEFT JOIN p.membresia m " +
-           "WHERE p.estado IN ('aprobado', 'approved', 'COMPLETADO', 'COMPLETED') " +
-           "AND p.fechaRegistro BETWEEN :inicio AND :fin " +
-           "GROUP BY COALESCE(m.nombre, p.planNombre) " +
-           "ORDER BY SUM(p.montoFinal) DESC")
-    List<Object[]> sumMontoByPlanAndFechaBetween(
-        @Param("inicio") Instant inicio, 
-        @Param("fin") Instant fin
-    );
-
-    /**
-     * Obtiene historial de pagos con filtro opcional por nombre/teléfono (HU-30).
-     * Retorna: [pagoId, fechaRegistro, nombreCliente, apellidoCliente, nombreMembresia, metodoPago, montoFinal, estado]
-     */
-    @Query("SELECT p.id, p.fechaRegistro, p.cliente.nombre, p.cliente.apellido, " +
-           "COALESCE(m.nombre, p.planNombre), p.metodoPago, p.montoFinal, p.estado " +
-           "FROM Pago p " +
-           "LEFT JOIN p.membresia m " +
-           "WHERE (:busqueda IS NULL OR :busqueda = '' " +
-           "  OR LOWER(p.cliente.nombre) LIKE LOWER(CONCAT('%', :busqueda, '%')) " +
-           "  OR LOWER(p.cliente.apellido) LIKE LOWER(CONCAT('%', :busqueda, '%')) " +
-           "  OR p.cliente.telefono LIKE CONCAT('%', :busqueda, '%')) " +
-           "ORDER BY p.fechaRegistro DESC")
-    List<Object[]> obtenerHistorialPagosFiltrado(@Param("busqueda") String busqueda);
 }
 

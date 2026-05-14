@@ -13,5 +13,5 @@ WORKDIR /app
 COPY --from=build /app/target/*.jar app.jar
 # Expone el puerto dinámico
 EXPOSE 8080
-# Comando para ejecutar la aplicación
-ENTRYPOINT ["java", "-jar", "app.jar"]
+# Comando para ejecutar la aplicación con límite de memoria RAM (Crucial para Render Free)
+ENTRYPOINT ["java", "-Xmx300m", "-Xms300m", "-jar", "app.jar"]
