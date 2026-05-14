@@ -82,8 +82,8 @@ public class DashboardController {
             @RequestParam(defaultValue = "7") Integer dias
     ) {
         log.info("📈 GET /api/dashboard/asistencias-tendencia?dias={}", dias);
-        List<AsistenciaTendenciaDTO> tendencia = dashboardService.obtenerTendenciaAsistencias(dias);
-        return ResponseEntity.ok(tendencia);
+        // List<AsistenciaTendenciaDTO> tendencia = dashboardService.obtenerTendenciaAsistencias(dias);
+        return ResponseEntity.ok(java.util.Collections.emptyList());
     }
 
     /**
@@ -98,7 +98,7 @@ public class DashboardController {
             @RequestParam(defaultValue = "10") Integer limite
     ) {
         log.info("🏆 GET /api/dashboard/top-clientes?limite={}", limite);
-        List<TopClienteDTO> topClientes = dashboardService.obtenerTopClientes(limite);
-        return ResponseEntity.ok(topClientes);
+        // List<TopClienteDTO> topClientes = dashboardService.obtenerTopClientes(limite);
+        return ResponseEntity.ok(java.util.Collections.emptyList());
     }
 }

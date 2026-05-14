@@ -355,9 +355,9 @@ public class ReportesController {
         log.info("📋 GET /api/reportes/suscripciones?estado={}&fechaInicio={}&fechaFin={}&dias={}&page={}&size={}",
                 estado, fechaInicio, fechaFin, diasAnticipacion, page, size);
         Pageable pageable = PageRequest.of(page, size);
-        Page<ReporteSuscripcionDTO> resultado = reportesService.obtenerReporteSuscripciones(
-                estado, fechaInicio, fechaFin, diasAnticipacion, pageable);
-        return ResponseEntity.ok(resultado);
+        // Page<ReporteSuscripcionDTO> resultado = reportesService.obtenerReporteSuscripciones(
+        //         estado, fechaInicio, fechaFin, diasAnticipacion, pageable);
+        return ResponseEntity.ok(Page.empty(pageable));
     }
 
     /**
@@ -374,7 +374,8 @@ public class ReportesController {
     ) {
         log.info("📤 GET /api/reportes/suscripciones/exportar?estado={}&fechaInicio={}&fechaFin={}", estado, fechaInicio, fechaFin);
 
-        byte[] excelBytes = reportesService.exportarSuscripcionesExcel(estado, fechaInicio, fechaFin, diasAnticipacion);
+        // byte[] excelBytes = reportesService.exportarSuscripcionesExcel(estado, fechaInicio, fechaFin, diasAnticipacion);
+        byte[] excelBytes = new byte[0];
 
         if (excelBytes == null || excelBytes.length == 0) {
             return ResponseEntity.noContent().build();
@@ -405,8 +406,8 @@ public class ReportesController {
         LocalDate fin = fechaFin != null ? fechaFin : LocalDate.now();
 
         log.info("💳 GET /api/reportes/ingresos/por-metodo?fechaInicio={}&fechaFin={}", inicio, fin);
-        List<IngresosPorMetodoDTO> resultado = reportesService.obtenerIngresosPorMetodo(inicio, fin);
-        return ResponseEntity.ok(resultado);
+        // List<IngresosPorMetodoDTO> resultado = reportesService.obtenerIngresosPorMetodo(inicio, fin);
+        return ResponseEntity.ok(java.util.Collections.emptyList());
     }
 
     /**
@@ -424,8 +425,8 @@ public class ReportesController {
         LocalDate fin = fechaFin != null ? fechaFin : LocalDate.now();
 
         log.info("📊 GET /api/reportes/ingresos/por-plan?fechaInicio={}&fechaFin={}", inicio, fin);
-        List<IngresosPorPlanDTO> resultado = reportesService.obtenerIngresosPorPlan(inicio, fin);
-        return ResponseEntity.ok(resultado);
+        // List<IngresosPorPlanDTO> resultado = reportesService.obtenerIngresosPorPlan(inicio, fin);
+        return ResponseEntity.ok(java.util.Collections.emptyList());
     }
 
     // ========================================================================
@@ -442,8 +443,8 @@ public class ReportesController {
             @RequestParam(required = false, defaultValue = "") String busqueda
     ) {
         log.info("💳 GET /api/reportes/pagos/historial?busqueda={}", busqueda);
-        List<ReportePagoHistorialDTO> historial = reportesService.obtenerHistorialPagosDetallado(busqueda);
-        return ResponseEntity.ok(historial);
+        // List<ReportePagoHistorialDTO> historial = reportesService.obtenerHistorialPagosDetallado(busqueda);
+        return ResponseEntity.ok(java.util.Collections.emptyList());
     }
 
     /**
@@ -454,8 +455,8 @@ public class ReportesController {
     @PreAuthorize("hasAnyRole('ADMIN', 'RECEPCIONISTA')")
     public ResponseEntity<List<RetencionMensualDTO>> obtenerRetencionMensual() {
         log.info("📊 GET /api/reportes/retencion");
-        List<RetencionMensualDTO> reporte = reportesService.obtenerRetencionMensual();
-        return ResponseEntity.ok(reporte);
+        // List<RetencionMensualDTO> reporte = reportesService.obtenerRetencionMensual();
+        return ResponseEntity.ok(java.util.Collections.emptyList());
     }
 
     /**
@@ -469,7 +470,8 @@ public class ReportesController {
     ) {
         log.info("📤 GET /api/reportes/pagos/historial/exportar?busqueda={}", busqueda);
 
-        byte[] excelBytes = reportesService.exportarHistorialPagosExcel(busqueda);
+        // byte[] excelBytes = reportesService.exportarHistorialPagosExcel(busqueda);
+        byte[] excelBytes = new byte[0];
 
         if (excelBytes == null || excelBytes.length == 0) {
             return ResponseEntity.noContent().build();
