@@ -38,3 +38,6 @@ build/
 backend_logs.txt
 backend_startup.log
 logs/
+
+# Variables de entorno
+.env
