@@ -1,0 +1,20 @@
+{
+  "name": "vip-center-backend",
+  "version": "1.0.0",
+  "description": "Backend de software para el gimnasio Vip-Center",
+  "main": "src/server.js",
+  "scripts": {
+    "test": "jest --runInBand",
+    "start": "node src/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "jest": "^30.4.2",
+    "supertest": "^7.2.2"
+  }
+}
