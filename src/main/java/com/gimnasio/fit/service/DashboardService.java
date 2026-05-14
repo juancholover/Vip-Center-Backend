@@ -227,6 +227,72 @@ public class DashboardService {
     }
 
     /**
+     * Obtiene la tendencia de asistencias agrupadas por día (HU-26).
+     */
+    @Transactional(readOnly = true)
+    public List<AsistenciaTendenciaDTO> obtenerTendenciaAsistencias(Integer dias) {
+        List<AsistenciaTendenciaDTO> tendencia = new ArrayList<>();
+        LocalDate hoy = LocalDate.now();
+
+        for (int i = dias - 1; i >= 0; i--) {
+            LocalDate fecha = hoy.minusDays(i);
+            LocalDateTime inicio = fecha.atStartOfDay();
+            LocalDateTime fin = fecha.atTime(23, 59, 59);
+
+            Integer cantidad = asistenciaRepository.countByFechaHoraBetween(inicio, fin);
+            if (cantidad == null) cantidad = 0;
+
+            String fechaStr;
+            if (dias <= 7) {
+                fechaStr = fecha.getDayOfWeek().getDisplayName(TextStyle.SHORT, new Locale("es", "ES"));
+            } else {
+                fechaStr = fecha.format(java.time.format.DateTimeFormatter.ofPattern("dd/MM"));
+            }
+
+            tendencia.add(new AsistenciaTendenciaDTO(fechaStr, cantidad));
+        }
+
+        return tendencia;
+    }
+
+    /**
+     * Obtiene el ranking de clientes con más asistencias del mes actual (HU-26).
+     */
+    @Transactional(readOnly = true)
+    public List<TopClienteDTO> obtenerTopClientes(Integer limite) {
+        try {
+            LocalDate inicioMes = LocalDate.now().withDayOfMonth(1);
+            LocalDateTime inicioDateTime = inicioMes.atStartOfDay();
+            LocalDateTime finDateTime = LocalDate.now().atTime(23, 59, 59);
+
+            List<Object[]> resultados = asistenciaRepository.obtenerAsistenciasPorCliente(inicioDateTime, finDateTime);
+            List<TopClienteDTO> topClientes = new ArrayList<>();
+
+            int count = 0;
+            for (Object[] fila : resultados) {
+                if (count >= limite) break;
+                
+                Long clienteIdLong = (Long) fila[0];
+                String nombre = (String) fila[1];
+                String apellido = (String) fila[2];
+                Long totalAsistencias = (Long) fila[5];
+
+                topClientes.add(new TopClienteDTO(
+                    clienteIdLong, 
+                    nombre + " " + apellido, 
+                    totalAsistencias.intValue()
+                ));
+                count++;
+            }
+
+            return topClientes;
+        } catch (Exception e) {
+            log.error("❌ Error al obtener top clientes: {}", e.getMessage(), e);
+            return new ArrayList<>();
+        }
+    }
+
+    /**
      * Calcula el tiempo relativo (ej: "Hace 5 minutos", "Hace 2 horas").
      * Sobrecarga para LocalDateTime.
      */

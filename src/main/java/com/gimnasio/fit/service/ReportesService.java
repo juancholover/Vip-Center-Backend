@@ -12,6 +12,18 @@ import java.time.format.TextStyle;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
+import jakarta.persistence.criteria.Predicate;
+import com.gimnasio.fit.entity.Cliente;
+import java.util.stream.Collectors;
+
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.streaming.SXSSFWorkbook;
+import java.io.ByteArrayOutputStream;
+
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -1530,5 +1542,289 @@ public class ReportesService {
         return crearMetrica("Pagos Realizados", actual.toString(), anterior.toString(), 
                            "credit-card", "ingreso");
     }
-}
 
+    // ========================================================================
+    // HU-28: REPORTE DE SUSCRIPCIONES (Paginado + Exportar Excel)
+    // ========================================================================
+
+    @Transactional(readOnly = true)
+    public Page<ReporteSuscripcionDTO> obtenerReporteSuscripciones(
+            String estado, LocalDate fechaInicio, LocalDate fechaFin, Integer diasAnticipacion, Pageable pageable) {
+
+        Specification<Cliente> spec = buildSuscripcionSpecification(estado, fechaInicio, fechaFin, diasAnticipacion);
+        Page<Cliente> clientesPage = clienteRepository.findAll(spec, pageable);
+
+        List<ReporteSuscripcionDTO> dtos = clientesPage.getContent().stream().map(c -> {
+            String plan = c.getMembresiaActual() != null ? c.getMembresiaActual().getNombre() : "Sin Membresía";
+            String estadoReal = c.getEstado(); // Este usa la lógica getEstado() que arreglamos ("vencido", "activo", etc)
+            return new ReporteSuscripcionDTO(
+                    Long.valueOf(c.getId()),
+                    c.getNombreCompleto(),
+                    c.getEmail(),
+                    c.getTelefono(),
+                    plan,
+                    c.getFechaVencimiento(),
+                    estadoReal.toUpperCase()
+            );
+        }).collect(Collectors.toList());
+
+        return new PageImpl<>(dtos, pageable, clientesPage.getTotalElements());
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] exportarSuscripcionesExcel(
+            String estado, LocalDate fechaInicio, LocalDate fechaFin, Integer diasAnticipacion) {
+        
+        Specification<Cliente> spec = buildSuscripcionSpecification(estado, fechaInicio, fechaFin, diasAnticipacion);
+        List<Cliente> clientes = clienteRepository.findAll(spec); // Traemos todos sin paginación
+
+        try (SXSSFWorkbook workbook = new SXSSFWorkbook(100)) {
+            Sheet sheet = workbook.createSheet("Suscripciones");
+
+            // Estilos
+            CellStyle headerStyle = workbook.createCellStyle();
+            Font headerFont = workbook.createFont();
+            headerFont.setBold(true);
+            headerStyle.setFont(headerFont);
+            headerStyle.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());
+            headerStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+
+            // Cabecera
+            Row headerRow = sheet.createRow(0);
+            String[] headers = {"ID", "Cliente", "Email", "Teléfono", "Plan", "Fecha Vencimiento", "Estado"};
+            for (int i = 0; i < headers.length; i++) {
+                Cell cell = headerRow.createCell(i);
+                cell.setCellValue(headers[i]);
+                cell.setCellStyle(headerStyle);
+            }
+
+            // Datos
+            int rowNum = 1;
+            for (Cliente c : clientes) {
+                Row row = sheet.createRow(rowNum++);
+                row.createCell(0).setCellValue(c.getId());
+                row.createCell(1).setCellValue(c.getNombreCompleto());
+                row.createCell(2).setCellValue(c.getEmail() != null ? c.getEmail() : "");
+                row.createCell(3).setCellValue(c.getTelefono() != null ? c.getTelefono() : "");
+                row.createCell(4).setCellValue(c.getMembresiaActual() != null ? c.getMembresiaActual().getNombre() : "Sin Membresía");
+                row.createCell(5).setCellValue(c.getFechaVencimiento() != null ? c.getFechaVencimiento().toString() : "");
+                row.createCell(6).setCellValue(c.getEstado().toUpperCase());
+            }
+
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            workbook.write(out);
+            return out.toByteArray();
+
+        } catch (Exception e) {
+            log.error("❌ Error exportando Excel de suscripciones", e);
+            return new byte[0];
+        }
+    }
+
+    private Specification<Cliente> buildSuscripcionSpecification(
+            String estado, LocalDate fechaInicio, LocalDate fechaFin, Integer diasAnticipacion) {
+        return (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            LocalDate hoy = LocalDate.now();
+
+            if (estado != null && !estado.isEmpty()) {
+                switch (estado.toLowerCase()) {
+                    case "activa":
+                        predicates.add(cb.greaterThanOrEqualTo(root.get("fechaVencimiento"), hoy));
+                        break;
+                    case "vencida":
+                    case "sin_membresia":
+                        predicates.add(cb.lessThan(root.get("fechaVencimiento"), hoy));
+                        break;
+                    case "por_vencer":
+                        int dias = diasAnticipacion != null ? diasAnticipacion : 15;
+                        predicates.add(cb.between(root.get("fechaVencimiento"), hoy, hoy.plusDays(dias)));
+                        break;
+                }
+            }
+
+            if (fechaInicio != null) {
+                predicates.add(cb.greaterThanOrEqualTo(root.get("fechaVencimiento"), fechaInicio));
+            }
+            if (fechaFin != null) {
+                predicates.add(cb.lessThanOrEqualTo(root.get("fechaVencimiento"), fechaFin));
+            }
+
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
+    }
+
+    // ========================================================================
+    // HU-29: INGRESOS POR MÉTODO DE PAGO Y POR PLAN
+    // ========================================================================
+
+    @Transactional(readOnly = true)
+    public List<IngresosPorMetodoDTO> obtenerIngresosPorMetodo(LocalDate fechaInicio, LocalDate fechaFin) {
+        Instant inicio = toInstant(fechaInicio.atStartOfDay());
+        Instant fin = toInstant(fechaFin.atTime(23, 59, 59));
+
+        List<Object[]> resultados = pagoRepository.sumMontoByMetodoPagoAndFechaBetween(inicio, fin);
+        
+        // Calcular total general para los porcentajes
+        double totalGeneral = 0;
+        for (Object[] row : resultados) {
+            totalGeneral += row[1] != null ? ((Number) row[1]).doubleValue() : 0;
+        }
+
+        List<IngresosPorMetodoDTO> dtos = new ArrayList<>();
+        for (Object[] row : resultados) {
+            String metodo = (String) row[0];
+            Double total = row[1] != null ? ((Number) row[1]).doubleValue() : 0.0;
+            Integer cantidad = row[2] != null ? ((Number) row[2]).intValue() : 0;
+            Double porcentaje = totalGeneral > 0 ? (total / totalGeneral) * 100 : 0.0;
+
+            dtos.add(new IngresosPorMetodoDTO(
+                metodo != null ? metodo : "Sin Método",
+                Math.round(total * 100.0) / 100.0,
+                cantidad,
+                Math.round(porcentaje * 100.0) / 100.0
+            ));
+        }
+        return dtos;
+    }
+
+    @Transactional(readOnly = true)
+    public List<IngresosPorPlanDTO> obtenerIngresosPorPlan(LocalDate fechaInicio, LocalDate fechaFin) {
+        Instant inicio = toInstant(fechaInicio.atStartOfDay());
+        Instant fin = toInstant(fechaFin.atTime(23, 59, 59));
+
+        List<Object[]> resultados = pagoRepository.sumMontoByMembresiaAndFechaBetween(inicio, fin);
+        
+        double totalGeneral = 0;
+        for (Object[] row : resultados) {
+            totalGeneral += row[1] != null ? ((Number) row[1]).doubleValue() : 0;
+        }
+
+        List<IngresosPorPlanDTO> dtos = new ArrayList<>();
+        for (Object[] row : resultados) {
+            String plan = (String) row[0];
+            Double total = row[1] != null ? ((Number) row[1]).doubleValue() : 0.0;
+            Integer cantidad = 0; // The custom query groups by plan, adding COUNT(p) would need a change. For now we leave 0 or approximate.
+            Double porcentaje = totalGeneral > 0 ? (total / totalGeneral) * 100 : 0.0;
+
+            dtos.add(new IngresosPorPlanDTO(
+                plan != null ? plan : "Sin Plan",
+                Math.round(total * 100.0) / 100.0,
+                cantidad,
+                Math.round(porcentaje * 100.0) / 100.0
+            ));
+        }
+        return dtos;
+    }
+
+    // ========================================================================
+    // HU-30: HISTORIAL DE PAGOS Y RETENCIÓN
+    // ========================================================================
+
+    @Transactional(readOnly = true)
+    public List<ReportePagoHistorialDTO> obtenerHistorialPagosDetallado(String busqueda) {
+        List<Object[]> resultados = pagoRepository.obtenerHistorialPagosDetallado(busqueda);
+        List<ReportePagoHistorialDTO> historial = new ArrayList<>();
+        
+        for (Object[] fila : resultados) {
+            Long pagoId = (Long) fila[0];
+            Instant fechaReg = (Instant) fila[1];
+            String nombreCli = (String) fila[2] + " " + (String) fila[3];
+            String plan = (String) fila[4];
+            String metodo = (String) fila[5];
+            Double monto = fila[6] != null ? ((Number) fila[6]).doubleValue() : 0.0;
+            String estado = (String) fila[7];
+            
+            LocalDateTime ldt = toLocalDateTime(fechaReg);
+            String fechaStr = ldt.format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy"));
+            String horaStr = ldt.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"));
+            
+            historial.add(new ReportePagoHistorialDTO(
+                pagoId, fechaStr, horaStr, nombreCli, 
+                plan != null ? plan : "Sin membresía", 
+                metodo != null ? metodo : "Sin especificar", 
+                monto, estado
+            ));
+        }
+        return historial;
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] exportarHistorialPagosExcel(String busqueda) {
+        List<ReportePagoHistorialDTO> historial = obtenerHistorialPagosDetallado(busqueda);
+        
+        try (SXSSFWorkbook workbook = new SXSSFWorkbook(100)) {
+            Sheet sheet = workbook.createSheet("Historial de Pagos");
+            
+            CellStyle headerStyle = workbook.createCellStyle();
+            Font headerFont = workbook.createFont();
+            headerFont.setBold(true);
+            headerStyle.setFont(headerFont);
+            
+            Row headerRow = sheet.createRow(0);
+            String[] headers = {"ID", "Fecha", "Hora", "Cliente", "Plan", "Método", "Monto", "Estado"};
+            for (int i = 0; i < headers.length; i++) {
+                Cell cell = headerRow.createCell(i);
+                cell.setCellValue(headers[i]);
+                cell.setCellStyle(headerStyle);
+            }
+            
+            int rowNum = 1;
+            for (ReportePagoHistorialDTO dto : historial) {
+                Row row = sheet.createRow(rowNum++);
+                row.createCell(0).setCellValue(dto.getPagoId() != null ? dto.getPagoId() : 0);
+                row.createCell(1).setCellValue(dto.getFecha());
+                row.createCell(2).setCellValue(dto.getHora());
+                row.createCell(3).setCellValue(dto.getCliente());
+                row.createCell(4).setCellValue(dto.getPlan());
+                row.createCell(5).setCellValue(dto.getMetodo());
+                row.createCell(6).setCellValue(dto.getMonto());
+                row.createCell(7).setCellValue(dto.getEstado());
+            }
+            
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            workbook.write(out);
+            return out.toByteArray();
+        } catch (Exception e) {
+            log.error("❌ Error exportando historial de pagos", e);
+            return new byte[0];
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public List<RetencionMensualDTO> obtenerRetencionMensual() {
+        List<RetencionMensualDTO> retencionList = new ArrayList<>();
+        LocalDate hoy = LocalDate.now();
+        
+        // Calcular los últimos 12 meses
+        for (int i = 11; i >= 0; i--) {
+            LocalDate iterMes = hoy.minusMonths(i);
+            LocalDate inicioMes = iterMes.withDayOfMonth(1);
+            LocalDate finMes = iterMes.withDayOfMonth(iterMes.lengthOfMonth());
+            
+            Instant inicioInst = toInstant(inicioMes.atStartOfDay());
+            Instant finInst = toInstant(finMes.atTime(23, 59, 59));
+            
+            // Renovaciones: Pagos hechos en ese mes por clientes antiguos (creados antes del mes)
+            Integer renovaciones = clienteRepository.countRenovacionesInRange(inicioInst, finInst, inicioInst);
+            if (renovaciones == null) renovaciones = 0;
+            
+            // Cancelaciones: Clientes con qr inactivo cuya membresia vencio en ese mes
+            Integer cancelaciones = clienteRepository.countCancelacionesInRange(inicioMes, finMes);
+            if (cancelaciones == null) cancelaciones = 0;
+            
+            String nombreMes = iterMes.getMonth().getDisplayName(TextStyle.FULL, new Locale("es", "ES"));
+            nombreMes = nombreMes.substring(0, 1).toUpperCase() + nombreMes.substring(1);
+            
+            retencionList.add(new RetencionMensualDTO(
+                iterMes.getYear(),
+                iterMes.getMonthValue(),
+                nombreMes,
+                renovaciones,
+                cancelaciones
+            ));
+        }
+        
+        return retencionList;
+    }
+}

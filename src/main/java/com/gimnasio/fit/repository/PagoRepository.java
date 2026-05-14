@@ -52,6 +52,20 @@ public interface PagoRepository extends JpaRepository<Pago, Long> {
     List<Object[]> obtenerHistorialPagos(@Param("limite") Integer limite);
 
     /**
+     * Obtiene historial detallado de pagos filtrando por búsqueda de cliente.
+     */
+    @Query("SELECT p.id, p.fechaRegistro, p.cliente.nombre, p.cliente.apellido, " +
+           "m.nombre, p.metodoPago, p.montoFinal, p.estado " +
+           "FROM Pago p " +
+           "LEFT JOIN p.membresia m " +
+           "WHERE :busqueda IS NULL OR :busqueda = '' " +
+           "OR LOWER(p.cliente.nombre) LIKE LOWER(CONCAT('%', :busqueda, '%')) " +
+           "OR LOWER(p.cliente.apellido) LIKE LOWER(CONCAT('%', :busqueda, '%')) " +
+           "OR LOWER(p.cliente.telefono) LIKE LOWER(CONCAT('%', :busqueda, '%')) " +
+           "ORDER BY p.fechaRegistro DESC")
+    List<Object[]> obtenerHistorialPagosDetallado(@Param("busqueda") String busqueda);
+
+    /**
      * Suma ingresos agrupados por tipo de membresía en un rango de fechas.
      * Retorna: [nombreMembresia, SUM(montoFinal)]
      */
