@@ -25,10 +25,11 @@ public class CorsConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
         
-        // Orígenes permitidos (frontend en desarrollo)
+        // Orígenes permitidos (frontend en desarrollo y producción)
         configuration.setAllowedOrigins(List.of(
             "http://localhost:5173",  // Vite dev server
-            "http://localhost:3000"   // Por si usas otro puerto en el futuro
+            "http://localhost:3000",  // Por si usas otro puerto en el futuro
+            "https://vip-center.onrender.com" // Producción en Render
         ));
         
         // Métodos HTTP permitidos
